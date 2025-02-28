@@ -16,7 +16,7 @@ from isaaclab.sensors import ContactSensor, RayCaster
 from .g1_env_cfg import G1FlatEnvCfg, G1RoughEnvCfg
 
 
-class AnymalCEnv(DirectRLEnv):
+class G1Env(DirectRLEnv):
     cfg: G1FlatEnvCfg | G1RoughEnvCfg
 
     def __init__(self, cfg: G1FlatEnvCfg | G1RoughEnvCfg, render_mode: str | None = None, **kwargs):

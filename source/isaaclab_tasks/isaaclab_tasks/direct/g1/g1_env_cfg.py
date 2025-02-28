@@ -55,8 +55,8 @@ class G1FlatEnvCfg(DirectRLEnvCfg):
     episode_length_s = 20.0
     decimation = 4
     action_scale = 0.5
-    action_space = 12  #TODO: update
-    observation_space = 48  #TODO: update
+    action_space = 37
+    observation_space = 123
     state_space = 0
 
     # simulation
@@ -114,7 +114,7 @@ class G1FlatEnvCfg(DirectRLEnvCfg):
 @configclass
 class G1RoughEnvCfg(G1FlatEnvCfg):
     # env
-    observation_space = 235
+    observation_space = 310
 
     terrain = TerrainImporterCfg(
         prim_path="/World/ground",
