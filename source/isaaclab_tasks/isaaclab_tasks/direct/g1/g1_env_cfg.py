@@ -18,7 +18,7 @@ from isaaclab.utils import configclass
 ##
 # Pre-defined configs
 ##
-from isaaclab_assets.robots.unitree.g1 import G1_CFG  # isort: skip
+from isaaclab_assets.robots.unitree import G1_CFG  # isort: skip
 from isaaclab.terrains.config.rough import ROUGH_TERRAINS_CFG  # isort: skip
 
 
@@ -42,7 +42,7 @@ class EventCfg:
         func=mdp.randomize_rigid_body_mass,
         mode="startup",
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names="base"),
+            "asset_cfg": SceneEntityCfg("robot", body_names="pelvis"),
             "mass_distribution_params": (-5.0, 5.0),
             "operation": "add",
         },
@@ -90,7 +90,7 @@ class G1FlatEnvCfg(DirectRLEnvCfg):
     scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=4.0, replicate_physics=True)
 
     # events
-    events: EventCfg = EventCfg()
+    events: EventCfg = None
 
     # robot
     robot: ArticulationCfg = G1_CFG.replace(prim_path="/World/envs/env_.*/Robot")
@@ -100,15 +100,25 @@ class G1FlatEnvCfg(DirectRLEnvCfg):
 
     # reward scales
     lin_vel_reward_scale = 1.0
-    yaw_rate_reward_scale = 0.5
-    z_vel_reward_scale = -2.0
-    ang_vel_reward_scale = -0.05
-    joint_torque_reward_scale = -2.5e-5
-    joint_accel_reward_scale = -2.5e-7
-    action_rate_reward_scale = -0.01
-    feet_air_time_reward_scale = 0.5
-    undesired_contact_reward_scale = -1.0
-    flat_orientation_reward_scale = -5.0
+    yaw_rate_reward_scale = 2.0
+    feet_air_time_reward_scale = 0.4
+    feet_slide_reward_scale = -0.1
+    dof_pos_limit_reward_scale = -1.0
+    joint_deviation_hip_reward_scale = -0.1
+    joint_deviation_arms_reward_scale = -0.1
+    joint_deviation_fingers_reward_scale = -0.05
+    jiont_deviation_torso_reward_scale = -0.1
+
+
+
+    # z_vel_reward_scale = -2.0
+    # ang_vel_reward_scale = -0.05
+    # joint_torque_reward_scale = -2.5e-5
+    # joint_accel_reward_scale = -2.5e-7
+    # action_rate_reward_scale = -0.01
+    
+    # undesired_contact_reward_scale = -1.0
+    # flat_orientation_reward_scale = -5.0
 
 
 @configclass
