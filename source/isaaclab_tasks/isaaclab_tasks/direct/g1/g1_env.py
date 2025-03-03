@@ -43,13 +43,23 @@ class G1Env(DirectRLEnv):
                 "dof_acc_l2",
                 "action_rate_l2",
                 "feet_air_time",
-                # "undesired_contacts",
                 "flat_orientation_l2",
+                "feet_slide",
+                "dof_pos_limits",
+                "joint_deviation_hip",
+                "joint_deviation_arms"
+                "joint_deviation_fingers",
+                "joint_deviation_torso",
             ]
         }
         # Get specific body indices
         self._base_id, _ = self._contact_sensor.find_bodies("pelvis")
         self._feet_ids, _ = self._contact_sensor.find_bodies(".*_ankle_roll_link")
+        self._ankle_ids, _ = self._contact_sensor.find_joints([".*_ankle_pitch_joint", ".*_ankle_roll_joint"])
+        self._hip_ids, _ = self._contact_sensor.find_joints([".*_hip_yaw_joint", ".*_hip_roll_joint"])
+        self._arm_ids, _ = self._contact_sensor.find_joints([".*_shoulder_pitch_joint", ".*_shoulder_roll_joint", ".*_shoulder_yaw_joint", ".*_elbow_pitch_joint", ".*_elbow_roll_joint"])
+        self._finger_ids, _ = self._contact_sensor.find_joints([".*_five_joint", ".*_three_joint", ".*_six_joint", ".*_four_joint", ".*_zero_joint", ".*_one_joint", ".*_two_joint"])
+        self._torso_ids, _ = self._contact_sensor.find_joints(["torso_joint"])
 
     def _setup_scene(self):
         self._robot = Articulation(self.cfg.robot)
@@ -126,31 +136,54 @@ class G1Env(DirectRLEnv):
         air_time = torch.sum((last_air_time - 0.5) * first_contact, dim=1) * (
             torch.norm(self._commands[:, :2], dim=1) > 0.1
         )
-        # undesired contacts
-        net_contact_forces = self._contact_sensor.data.net_forces_w_history
-        # is_contact = (
-        #     torch.max(torch.norm(net_contact_forces[:, :, self._undesired_contact_body_ids], dim=-1), dim=1)[0] > 1.0
-        # )
-        # contacts = torch.sum(is_contact, dim=1)
+
+        # feet slide
+        contacts = self._contact_sensor.data.net_forces_w_history[:, :, self._feet_ids, :].norm(dim=-1).max(dim=1)[0] > 1.0
+        body_vel = self._robot.data.body_lin_vel_w[:, self._base_id, :2]
+        feet_slide = torch.sum(body_vel.norm(dim=-1) * contacts, dim=1)
+
+        # joint pos limits
+        out_of_limits = -(
+            self._robot.data.joint_pos[:, self._ankle_ids] - self._robot.data.soft_joint_pos_limits[:, self._ankle_ids, 0]
+        ).clip(max=0.0)
+        out_of_limits += (
+            self._robot.data.joint_pos[:, self._ankle_ids] - self._robot.data.soft_joint_pos_limits[:, self._ankle_ids, 1]
+        ).clip(min=0.0)
+        joint_pos_limits = torch.sum(out_of_limits, dim=1)
+
+        # joint deviation l1
+        hip_angle = self._robot.data.joint_pos[:, self._hip_ids] - self._robot.data.default_joint_pos[:, self._hip_ids]
+        arms_angle = self._robot.data.joint_pos[:, self._arm_ids] - self._robot.data.default_joint_pos[:, self._arm_ids]
+        fingers_angle = self._robot.data.joint_pos[:, self._finger_ids] - self._robot.data.default_joint_pos[:, self._finger_ids]
+        torso_angle = self._robot.data.joint_pos[:, self._torso_ids] - self._robot.data.default_joint_pos[:, self._torso_ids]
+        
+        joint_deviation_hip = torch.sum(torch.abs(hip_angle), dim=1)
+        joint_deviation_arms = torch.sum(torch.abs(arms_angle), dim=1)
+        joint_deviation_fingers = torch.sum(torch.abs(fingers_angle), dim=1)
+        joint_deviation_torso = torch.sum(torch.abs(torso_angle), dim=1)
+
         # flat orientation
         flat_orientation = torch.sum(torch.square(self._robot.data.projected_gravity_b[:, :2]), dim=1)
 
         rewards = {
+            # "termination_penalty":
             "track_lin_vel_xy_exp": lin_vel_error_mapped * self.cfg.lin_vel_reward_scale * self.step_dt,
             "track_ang_vel_z_exp": yaw_rate_error_mapped * self.cfg.yaw_rate_reward_scale * self.step_dt,
             "feet_air_time": air_time * self.cfg.feet_air_time_reward_scale * self.step_dt,
-            # "feet_slide":
-            # "dof_pos_limits:"
-            # "joint_deviation_hip:"
-            # "joint_deviation_arms:"
-            # "joint_deviation_fingers:"
-            # "joint_deviation_torso"
+            "feet_slide": feet_slide * self.cfg.feet_slide_reward_scale * self.step_dt,
+            "dof_pos_limits": joint_pos_limits * self.cfg.dof_pos_limit_reward_scale * self.step_dt,
+            "joint_deviation_hip": joint_deviation_hip * self.cfg.joint_deviation_hip_reward_scale * self.step_dt,
+            "joint_deviation_arms": joint_deviation_arms * self.cfg.joint_deviation_arms_reward_scale * self.step_dt,
+            "joint_deviation_fingers": joint_deviation_fingers * self.cfg.joint_deviation_fingers_reward_scale * self.step_dt,
+            "joint_deviation_torso": joint_deviation_torso * self.cfg.joint_deviation_torso_reward_scale * self.step_dt,
+            
+            # other rewards
             "lin_vel_z_l2": z_vel_error * self.cfg.z_vel_reward_scale * self.step_dt,
             "ang_vel_xy_l2": ang_vel_error * self.cfg.ang_vel_reward_scale * self.step_dt,
             "dof_torques_l2": joint_torques * self.cfg.joint_torque_reward_scale * self.step_dt,
             "dof_acc_l2": joint_accel * self.cfg.joint_accel_reward_scale * self.step_dt,
             "action_rate_l2": action_rate * self.cfg.action_rate_reward_scale * self.step_dt,
-            # "undesired_contacts": contacts * self.cfg.undesired_contact_reward_scale * self.step_dt,
+            "undesired_contacts": None,
             "flat_orientation_l2": flat_orientation * self.cfg.flat_orientation_reward_scale * self.step_dt,
         }
         reward = torch.sum(torch.stack(list(rewards.values())), dim=0)

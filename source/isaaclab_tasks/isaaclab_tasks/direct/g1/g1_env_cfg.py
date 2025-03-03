@@ -107,18 +107,17 @@ class G1FlatEnvCfg(DirectRLEnvCfg):
     joint_deviation_hip_reward_scale = -0.1
     joint_deviation_arms_reward_scale = -0.1
     joint_deviation_fingers_reward_scale = -0.05
-    jiont_deviation_torso_reward_scale = -0.1
+    joint_deviation_torso_reward_scale = -0.1
 
-
-
-    # z_vel_reward_scale = -2.0
-    # ang_vel_reward_scale = -0.05
-    # joint_torque_reward_scale = -2.5e-5
-    # joint_accel_reward_scale = -2.5e-7
-    # action_rate_reward_scale = -0.01
+    # other reward scales
+    z_vel_reward_scale = -2.0
+    ang_vel_reward_scale = -0.05
+    joint_torque_reward_scale = -2.5e-5
+    joint_accel_reward_scale = -2.5e-7
+    action_rate_reward_scale = -0.01
     
-    # undesired_contact_reward_scale = -1.0
-    # flat_orientation_reward_scale = -5.0
+    undesired_contact_reward_scale = -1.0
+    flat_orientation_reward_scale = -5.0
 
 
 @configclass
