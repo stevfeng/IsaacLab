@@ -37,29 +37,30 @@ class G1Env(DirectRLEnv):
             for key in [
                 "track_lin_vel_xy_exp",
                 "track_ang_vel_z_exp",
+                "feet_air_time",
+                "feet_slide",
+                "dof_pos_limits",
+                "joint_deviation_hip",
+                "joint_deviation_arms",
+                "joint_deviation_fingers",
+                "joint_deviation_torso",
                 "lin_vel_z_l2",
                 "ang_vel_xy_l2",
                 "dof_torques_l2",
                 "dof_acc_l2",
                 "action_rate_l2",
-                "feet_air_time",
                 "flat_orientation_l2",
-                "feet_slide",
-                "dof_pos_limits",
-                "joint_deviation_hip",
-                "joint_deviation_arms"
-                "joint_deviation_fingers",
-                "joint_deviation_torso",
             ]
         }
+
         # Get specific body indices
         self._base_id, _ = self._contact_sensor.find_bodies("pelvis")
         self._feet_ids, _ = self._contact_sensor.find_bodies(".*_ankle_roll_link")
-        self._ankle_ids, _ = self._contact_sensor.find_joints([".*_ankle_pitch_joint", ".*_ankle_roll_joint"])
-        self._hip_ids, _ = self._contact_sensor.find_joints([".*_hip_yaw_joint", ".*_hip_roll_joint"])
-        self._arm_ids, _ = self._contact_sensor.find_joints([".*_shoulder_pitch_joint", ".*_shoulder_roll_joint", ".*_shoulder_yaw_joint", ".*_elbow_pitch_joint", ".*_elbow_roll_joint"])
-        self._finger_ids, _ = self._contact_sensor.find_joints([".*_five_joint", ".*_three_joint", ".*_six_joint", ".*_four_joint", ".*_zero_joint", ".*_one_joint", ".*_two_joint"])
-        self._torso_ids, _ = self._contact_sensor.find_joints(["torso_joint"])
+        self._ankle_ids, _ = self._robot.find_joints([".*_ankle_pitch_joint", ".*_ankle_roll_joint"])
+        self._hip_ids, _ = self._robot.find_joints([".*_hip_yaw_joint", ".*_hip_roll_joint"])
+        self._arm_ids, _ = self._robot.find_joints([".*_shoulder_pitch_joint", ".*_shoulder_roll_joint", ".*_shoulder_yaw_joint", ".*_elbow_pitch_joint", ".*_elbow_roll_joint"])
+        self._finger_ids, _ = self._robot.find_joints([".*_five_joint", ".*_three_joint", ".*_six_joint", ".*_four_joint", ".*_zero_joint", ".*_one_joint", ".*_two_joint"])
+        self._torso_ids, _ = self._robot.find_joints(["torso_joint"])
 
     def _setup_scene(self):
         self._robot = Articulation(self.cfg.robot)
@@ -183,9 +184,9 @@ class G1Env(DirectRLEnv):
             "dof_torques_l2": joint_torques * self.cfg.joint_torque_reward_scale * self.step_dt,
             "dof_acc_l2": joint_accel * self.cfg.joint_accel_reward_scale * self.step_dt,
             "action_rate_l2": action_rate * self.cfg.action_rate_reward_scale * self.step_dt,
-            "undesired_contacts": None,
             "flat_orientation_l2": flat_orientation * self.cfg.flat_orientation_reward_scale * self.step_dt,
         }
+
         reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
         # Logging
         for key, value in rewards.items():
