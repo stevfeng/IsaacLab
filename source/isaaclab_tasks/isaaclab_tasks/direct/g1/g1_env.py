@@ -118,15 +118,6 @@ class G1Env(DirectRLEnv):
         return observations
 
     def _get_rewards(self) -> torch.Tensor:
-
-        ### Convert command heading position to angular velocity
-        heading_error = math_utils.wrap_to_pi(self._commands[:, 2] - self._robot.data.heading_w)
-        self._commands[:, 2] = torch.clip(
-            1.0 * heading_error,
-            min=-1.0,
-            max=1.0,
-        )
-
         # linear velocity tracking
         lin_vel_error = torch.sum(torch.square(self._commands[:, :2] - self._robot.data.root_lin_vel_b[:, :2]), dim=1)
         lin_vel_error_mapped = torch.exp(-lin_vel_error / 0.25)
@@ -147,8 +138,7 @@ class G1Env(DirectRLEnv):
         first_contact = self._contact_sensor.compute_first_contact(self.step_dt)[:, self._feet_ids]
         last_air_time = self._contact_sensor.data.last_air_time[:, self._feet_ids]
 
-        feet_air_time_threshold = 0.4
-        air_time = torch.sum((last_air_time - feet_air_time_threshold) * first_contact, dim=1) * (
+        air_time = torch.sum((last_air_time - self.cfg.feet_air_time_threshold) * first_contact, dim=1) * (
             torch.norm(self._commands[:, :2], dim=1) > 0.1
         )
 
@@ -157,7 +147,7 @@ class G1Env(DirectRLEnv):
         body_vel = self._robot.data.body_lin_vel_w[:, self._base_id, :2]
         feet_slide = torch.sum(body_vel.norm(dim=-1) * contacts, dim=1)
 
-        # joint pos limits
+        # joint pos limits, Penalize ankle joint limits
         out_of_limits = -(
             self._robot.data.joint_pos[:, self._ankle_ids] - self._robot.data.soft_joint_pos_limits[:, self._ankle_ids, 0]
         ).clip(max=0.0)
@@ -166,7 +156,7 @@ class G1Env(DirectRLEnv):
         ).clip(min=0.0)
         joint_pos_limits = torch.sum(out_of_limits, dim=1)
 
-        # joint deviation l1
+        # penalize deviation from default of the joints that are not essential for locomotion
         hip_angle = self._robot.data.joint_pos[:, self._hip_ids] - self._robot.data.default_joint_pos[:, self._hip_ids]
         arms_angle = self._robot.data.joint_pos[:, self._arm_ids] - self._robot.data.default_joint_pos[:, self._arm_ids]
         fingers_angle = self._robot.data.joint_pos[:, self._finger_ids] - self._robot.data.default_joint_pos[:, self._finger_ids]
@@ -228,13 +218,13 @@ class G1Env(DirectRLEnv):
         self._actions[env_ids] = 0.0
         self._previous_actions[env_ids] = 0.0
         # Sample new commands
+        self._commands[env_ids] = torch.zeros_like(self._commands[env_ids])
+        self._commands[env_ids, 0] = torch.zeros_like(self._commands[env_ids, 0]).uniform_(0.0, 1.0)
+        self._commands[env_ids, 1] = torch.zeros_like(self._commands[env_ids, 1]).uniform_(-0.5, 0.5)
+        self._commands[env_ids, 2] = torch.zeros_like(self._commands[env_ids, 2]).uniform_(-1.0, 1.0)
+        
+        print("self._commands[env_ids]", self._commands[env_ids])
 
-        # command: 
-        # self._commands[env_ids] = torch.zeros_like(self._commands[env_ids]).uniform_(-1.0, 1.0)        
-        # self._commands[env_ids, 2] = self._commands[env_ids, 2] * math.pi
-
-        self._commands[env_ids, 0] = torch.zeros_like(self._commands[env_ids, 0])
-        self._commands[env_ids, 0] = 1
         # Reset robot state
         joint_pos = self._robot.data.default_joint_pos[env_ids]
         joint_vel = self._robot.data.default_joint_vel[env_ids]
