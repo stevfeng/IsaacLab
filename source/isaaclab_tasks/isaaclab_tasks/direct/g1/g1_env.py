@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import gymnasium as gym
 import torch
+import math
+import isaaclab.utils.math as math_utils
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import Articulation
@@ -28,7 +30,7 @@ class G1Env(DirectRLEnv):
             self.num_envs, gym.spaces.flatdim(self.single_action_space), device=self.device
         )
 
-        # X/Y linear velocity and yaw angular velocity commands
+        # X/Y linear velocity and yaw heading commands
         self._commands = torch.zeros(self.num_envs, 3, device=self.device)
 
         # Logging
@@ -58,6 +60,7 @@ class G1Env(DirectRLEnv):
         self._feet_ids, _ = self._contact_sensor.find_bodies(".*_ankle_roll_link")
         self._ankle_ids, _ = self._robot.find_joints([".*_ankle_pitch_joint", ".*_ankle_roll_joint"])
         self._hip_ids, _ = self._robot.find_joints([".*_hip_yaw_joint", ".*_hip_roll_joint"])
+        self._knee_ids, _ = self._robot.find_joints([".*_knee_joint"])
         self._arm_ids, _ = self._robot.find_joints([".*_shoulder_pitch_joint", ".*_shoulder_roll_joint", ".*_shoulder_yaw_joint", ".*_elbow_pitch_joint", ".*_elbow_roll_joint"])
         self._finger_ids, _ = self._robot.find_joints([".*_five_joint", ".*_three_joint", ".*_six_joint", ".*_four_joint", ".*_zero_joint", ".*_one_joint", ".*_two_joint"])
         self._torso_ids, _ = self._robot.find_joints(["torso_joint"])
@@ -115,6 +118,15 @@ class G1Env(DirectRLEnv):
         return observations
 
     def _get_rewards(self) -> torch.Tensor:
+
+        ### Convert command heading position to angular velocity
+        heading_error = math_utils.wrap_to_pi(self._commands[:, 2] - self._robot.data.heading_w)
+        self._commands[:, 2] = torch.clip(
+            1.0 * heading_error,
+            min=-1.0,
+            max=1.0,
+        )
+
         # linear velocity tracking
         lin_vel_error = torch.sum(torch.square(self._commands[:, :2] - self._robot.data.root_lin_vel_b[:, :2]), dim=1)
         lin_vel_error_mapped = torch.exp(-lin_vel_error / 0.25)
@@ -126,7 +138,7 @@ class G1Env(DirectRLEnv):
         # angular velocity x/y
         ang_vel_error = torch.sum(torch.square(self._robot.data.root_ang_vel_b[:, :2]), dim=1)
         # joint torques
-        joint_torques = torch.sum(torch.square(self._robot.data.applied_torque), dim=1)
+        joint_torques = torch.sum(torch.square(self._robot.data.applied_torque[:, self._hip_ids + self._knee_ids]), dim=1)
         # joint acceleration
         joint_accel = torch.sum(torch.square(self._robot.data.joint_acc), dim=1)
         # action rate
@@ -134,7 +146,9 @@ class G1Env(DirectRLEnv):
         # feet air time
         first_contact = self._contact_sensor.compute_first_contact(self.step_dt)[:, self._feet_ids]
         last_air_time = self._contact_sensor.data.last_air_time[:, self._feet_ids]
-        air_time = torch.sum((last_air_time - 0.5) * first_contact, dim=1) * (
+
+        feet_air_time_threshold = 0.4
+        air_time = torch.sum((last_air_time - feet_air_time_threshold) * first_contact, dim=1) * (
             torch.norm(self._commands[:, :2], dim=1) > 0.1
         )
 
@@ -168,8 +182,8 @@ class G1Env(DirectRLEnv):
 
         rewards = {
             # "termination_penalty":
-            "track_lin_vel_xy_exp": lin_vel_error_mapped * self.cfg.lin_vel_reward_scale * self.step_dt,
-            "track_ang_vel_z_exp": yaw_rate_error_mapped * self.cfg.yaw_rate_reward_scale * self.step_dt,
+            "track_lin_vel_xy_exp": lin_vel_error_mapped * self.cfg.track_lin_vel_xy_exp_scale * self.step_dt,
+            "track_ang_vel_z_exp": yaw_rate_error_mapped * self.cfg.track_ang_vel_z_exp_scale * self.step_dt,
             "feet_air_time": air_time * self.cfg.feet_air_time_reward_scale * self.step_dt,
             "feet_slide": feet_slide * self.cfg.feet_slide_reward_scale * self.step_dt,
             "dof_pos_limits": joint_pos_limits * self.cfg.dof_pos_limit_reward_scale * self.step_dt,
@@ -179,7 +193,7 @@ class G1Env(DirectRLEnv):
             "joint_deviation_torso": joint_deviation_torso * self.cfg.joint_deviation_torso_reward_scale * self.step_dt,
             
             # other rewards
-            "lin_vel_z_l2": z_vel_error * self.cfg.z_vel_reward_scale * self.step_dt,
+            "lin_vel_z_l2": z_vel_error * self.cfg.lin_vel_z_l2_scale * self.step_dt,
             "ang_vel_xy_l2": ang_vel_error * self.cfg.ang_vel_reward_scale * self.step_dt,
             "dof_torques_l2": joint_torques * self.cfg.joint_torque_reward_scale * self.step_dt,
             "dof_acc_l2": joint_accel * self.cfg.joint_accel_reward_scale * self.step_dt,
@@ -188,6 +202,10 @@ class G1Env(DirectRLEnv):
         }
 
         reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
+
+
+        # print("lin_vel_error_mapped", lin_vel_error)
+        # print("yaw_rate_error_mapped", yaw_rate_error)
         # Logging
         for key, value in rewards.items():
             self._episode_sums[key] += value
@@ -210,7 +228,13 @@ class G1Env(DirectRLEnv):
         self._actions[env_ids] = 0.0
         self._previous_actions[env_ids] = 0.0
         # Sample new commands
-        self._commands[env_ids] = torch.zeros_like(self._commands[env_ids]).uniform_(-1.0, 1.0)
+
+        # command: 
+        # self._commands[env_ids] = torch.zeros_like(self._commands[env_ids]).uniform_(-1.0, 1.0)        
+        # self._commands[env_ids, 2] = self._commands[env_ids, 2] * math.pi
+
+        self._commands[env_ids, 0] = torch.zeros_like(self._commands[env_ids, 0])
+        self._commands[env_ids, 0] = 1
         # Reset robot state
         joint_pos = self._robot.data.default_joint_pos[env_ids]
         joint_vel = self._robot.data.default_joint_vel[env_ids]

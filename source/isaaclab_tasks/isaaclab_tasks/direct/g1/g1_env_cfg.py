@@ -99,9 +99,9 @@ class G1FlatEnvCfg(DirectRLEnvCfg):
     )
 
     # reward scales
-    lin_vel_reward_scale = 1.0
-    yaw_rate_reward_scale = 2.0
-    feet_air_time_reward_scale = 0.4
+    track_ang_vel_z_exp_scale = 1.0
+    track_lin_vel_xy_exp_scale = 1.0
+    feet_air_time_reward_scale = 0.75
     feet_slide_reward_scale = -0.1
     dof_pos_limit_reward_scale = -1.0
     joint_deviation_hip_reward_scale = -0.1
@@ -110,11 +110,11 @@ class G1FlatEnvCfg(DirectRLEnvCfg):
     joint_deviation_torso_reward_scale = -0.1
 
     # other reward scales
-    z_vel_reward_scale = -2.0
+    lin_vel_z_l2_scale = -0.2
     ang_vel_reward_scale = -0.05
-    joint_torque_reward_scale = -2.5e-5
-    joint_accel_reward_scale = -2.5e-7
-    action_rate_reward_scale = -0.01
+    joint_torque_reward_scale = -2.0e-6
+    joint_accel_reward_scale = -1.0e-7
+    action_rate_reward_scale = -0.005
     
     undesired_contact_reward_scale = -1.0
     flat_orientation_reward_scale = -5.0
@@ -155,4 +155,22 @@ class G1RoughEnvCfg(G1FlatEnvCfg):
     )
 
     # reward scales (override from flat config)
-    flat_orientation_reward_scale = 0.0
+    track_lin_vel_xy_exp_scale = 1.0
+    track_ang_vel_z_exp_scale = 2.0
+    feet_air_time_reward_scale = 0.25
+    feet_slide_reward_scale = -0.1
+    dof_pos_limit_reward_scale = -1.0
+    joint_deviation_hip_reward_scale = -0.1
+    joint_deviation_arms_reward_scale = -0.1
+    joint_deviation_fingers_reward_scale = -0.05
+    joint_deviation_torso_reward_scale = -0.1
+
+    # other reward scales
+    lin_vel_z_l2_scale = -0.0
+    ang_vel_reward_scale = -0.05
+    joint_torque_reward_scale = -1.5e-7
+    joint_accel_reward_scale = -1.25e-7
+    action_rate_reward_scale = -0.005
+    
+    undesired_contact_reward_scale = -1.0
+    flat_orientation_reward_scale = -5.0
