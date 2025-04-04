@@ -99,6 +99,7 @@ class G1FlatEnvCfg(DirectRLEnvCfg):
     )
 
     # reward scales
+    termination_penalty_scale = -200
     track_ang_vel_z_exp_scale = 1.0
     lin_vel_z_l2_scale = -0.2
     action_rate_reward_scale = -0.005

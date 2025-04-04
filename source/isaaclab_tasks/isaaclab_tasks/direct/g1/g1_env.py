@@ -37,6 +37,7 @@ class G1Env(DirectRLEnv):
         self._episode_sums = {
             key: torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
             for key in [
+                "termination_penalty",
                 "track_lin_vel_xy_exp",
                 "track_ang_vel_z_exp",
                 "feet_air_time",
@@ -118,12 +119,14 @@ class G1Env(DirectRLEnv):
         return observations
 
     def _get_rewards(self) -> torch.Tensor:
+        # termination penalty
+        termination_penalty, timeout = self._get_dones()
         # linear velocity tracking
         lin_vel_error = torch.sum(torch.square(self._commands[:, :2] - self._robot.data.root_lin_vel_b[:, :2]), dim=1)
-        lin_vel_error_mapped = torch.exp(-lin_vel_error / 0.25)
+        lin_vel_error_mapped = torch.exp(-lin_vel_error / 0.25) # std is 0.5, std**2 is 0.25
         # yaw rate tracking
         yaw_rate_error = torch.square(self._commands[:, 2] - self._robot.data.root_ang_vel_b[:, 2])
-        yaw_rate_error_mapped = torch.exp(-yaw_rate_error / 0.25)
+        yaw_rate_error_mapped = torch.exp(-yaw_rate_error / 0.25) # std is 0.5, std**2 is 0.25
         # z velocity tracking
         z_vel_error = torch.square(self._robot.data.root_lin_vel_b[:, 2])
         # angular velocity x/y
@@ -138,7 +141,7 @@ class G1Env(DirectRLEnv):
         first_contact = self._contact_sensor.compute_first_contact(self.step_dt)[:, self._feet_ids]
         last_air_time = self._contact_sensor.data.last_air_time[:, self._feet_ids]
 
-        air_time = torch.sum((last_air_time - self.cfg.feet_air_time_threshold) * first_contact, dim=1) * (
+        feet_air_time = torch.sum((last_air_time - self.cfg.feet_air_time_threshold) * first_contact, dim=1) * (
             torch.norm(self._commands[:, :2], dim=1) > 0.1
         )
 
@@ -171,10 +174,10 @@ class G1Env(DirectRLEnv):
         flat_orientation = torch.sum(torch.square(self._robot.data.projected_gravity_b[:, :2]), dim=1)
 
         rewards = {
-            # "termination_penalty":
+            "termination_penalty": termination_penalty * self.cfg.termination_penalty_scale * self.step_dt,
             "track_lin_vel_xy_exp": lin_vel_error_mapped * self.cfg.track_lin_vel_xy_exp_scale * self.step_dt,
             "track_ang_vel_z_exp": yaw_rate_error_mapped * self.cfg.track_ang_vel_z_exp_scale * self.step_dt,
-            "feet_air_time": air_time * self.cfg.feet_air_time_reward_scale * self.step_dt,
+            "feet_air_time": feet_air_time * self.cfg.feet_air_time_reward_scale * self.step_dt,
             "feet_slide": feet_slide * self.cfg.feet_slide_reward_scale * self.step_dt,
             "dof_pos_limits": joint_pos_limits * self.cfg.dof_pos_limit_reward_scale * self.step_dt,
             "joint_deviation_hip": joint_deviation_hip * self.cfg.joint_deviation_hip_reward_scale * self.step_dt,
@@ -193,10 +196,6 @@ class G1Env(DirectRLEnv):
 
         reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
 
-
-        # print("lin_vel_error_mapped", lin_vel_error)
-        # print("yaw_rate_error_mapped", yaw_rate_error)
-        # Logging
         for key, value in rewards.items():
             self._episode_sums[key] += value
         return reward
@@ -217,13 +216,14 @@ class G1Env(DirectRLEnv):
             self.episode_length_buf[:] = torch.randint_like(self.episode_length_buf, high=int(self.max_episode_length))
         self._actions[env_ids] = 0.0
         self._previous_actions[env_ids] = 0.0
+
         # Sample new commands
         self._commands[env_ids] = torch.zeros_like(self._commands[env_ids])
         self._commands[env_ids, 0] = torch.zeros_like(self._commands[env_ids, 0]).uniform_(0.0, 1.0)
         self._commands[env_ids, 1] = torch.zeros_like(self._commands[env_ids, 1]).uniform_(-0.5, 0.5)
         self._commands[env_ids, 2] = torch.zeros_like(self._commands[env_ids, 2]).uniform_(-1.0, 1.0)
         
-        print("self._commands[env_ids]", self._commands[env_ids])
+        # print("self._commands[env_ids]", self._commands[env_ids])
 
         # Reset robot state
         joint_pos = self._robot.data.default_joint_pos[env_ids]
