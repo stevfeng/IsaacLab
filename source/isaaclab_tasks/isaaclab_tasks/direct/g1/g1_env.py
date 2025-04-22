@@ -9,6 +9,7 @@ import gymnasium as gym
 import torch
 import math
 import isaaclab.utils.math as math_utils
+from isaaclab.utils.math import quat_rotate_inverse, yaw_quat
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import Articulation
@@ -30,7 +31,7 @@ class G1Env(DirectRLEnv):
             self.num_envs, gym.spaces.flatdim(self.single_action_space), device=self.device
         )
 
-        # X/Y linear velocity and yaw heading commands
+        # X/Y linear velocity and angular velocity commands
         self._commands = torch.zeros(self.num_envs, 3, device=self.device)
 
         # Logging
@@ -58,6 +59,7 @@ class G1Env(DirectRLEnv):
 
         # Get specific body indices
         self._base_id, _ = self._contact_sensor.find_bodies("pelvis")
+        self._head_id, _ = self._contact_sensor.find_bodies("head_link")
         self._feet_ids, _ = self._contact_sensor.find_bodies(".*_ankle_roll_link")
         self._ankle_ids, _ = self._robot.find_joints([".*_ankle_pitch_joint", ".*_ankle_roll_joint"])
         self._hip_ids, _ = self._robot.find_joints([".*_hip_yaw_joint", ".*_hip_roll_joint"])
@@ -119,14 +121,33 @@ class G1Env(DirectRLEnv):
         return observations
 
     def _get_rewards(self) -> torch.Tensor:
+        """Calculate rewards for the G1 robot.
+        
+        This implementation has been aligned with the manager-based workflow to ensure
+        compatibility between policies trained with either approach. Key alignments:
+        1. Linear velocity tracking uses yaw-aligned frame instead of body frame
+        2. Angular velocity tracking uses world frame instead of body frame
+        3. Feet air time calculation uses biped-specific approach with single stance check
+        
+        Note: One remaining difference is that this implementation scales all rewards by the 
+        time step (self.step_dt), whereas the manager workflow uses fixed weights. This means 
+        the effective reward magnitude depends on the simulation frequency. For a simulation 
+        with dt=0.005s (200Hz), all rewards are effectively scaled by 0.005.
+        """
         # termination penalty
         termination_penalty, timeout = self._get_dones()
         # linear velocity tracking
-        lin_vel_error = torch.sum(torch.square(self._commands[:, :2] - self._robot.data.root_lin_vel_b[:, :2]), dim=1)
-        lin_vel_error_mapped = torch.exp(-lin_vel_error / 0.25) # std is 0.5, std**2 is 0.25
+        # Convert body frame velocities to yaw-aligned frame to match manager workflow
+        vel_yaw = quat_rotate_inverse(
+            yaw_quat(self._robot.data.root_quat_w), 
+            self._robot.data.root_lin_vel_w
+        )
+        lin_vel_error = torch.sum(torch.square(self._commands[:, :2] - vel_yaw[:, :2]), dim=1)
+        lin_vel_error_mapped = torch.exp(-lin_vel_error / 0.25)  # std is 0.5, std**2 is 0.25
         # yaw rate tracking
-        yaw_rate_error = torch.square(self._commands[:, 2] - self._robot.data.root_ang_vel_b[:, 2])
-        yaw_rate_error_mapped = torch.exp(-yaw_rate_error / 0.25) # std is 0.5, std**2 is 0.25
+        # Use world frame angular velocity to match manager workflow
+        yaw_rate_error = torch.square(self._commands[:, 2] - self._robot.data.root_ang_vel_w[:, 2])
+        yaw_rate_error_mapped = torch.exp(-yaw_rate_error / 0.25)  # std is 0.5, std**2 is 0.25
         # z velocity tracking
         z_vel_error = torch.square(self._robot.data.root_lin_vel_b[:, 2])
         # angular velocity x/y
@@ -137,13 +158,17 @@ class G1Env(DirectRLEnv):
         joint_accel = torch.sum(torch.square(self._robot.data.joint_acc), dim=1)
         # action rate
         action_rate = torch.sum(torch.square(self._actions - self._previous_actions), dim=1)
-        # feet air time
-        first_contact = self._contact_sensor.compute_first_contact(self.step_dt)[:, self._feet_ids]
-        last_air_time = self._contact_sensor.data.last_air_time[:, self._feet_ids]
-
-        feet_air_time = torch.sum((last_air_time - self.cfg.feet_air_time_threshold) * first_contact, dim=1) * (
-            torch.norm(self._commands[:, :2], dim=1) > 0.1
-        )
+        
+        # feet air time - modified to match biped-specific calculation from manager
+        air_time = self._contact_sensor.data.current_air_time[:, self._feet_ids]
+        contact_time = self._contact_sensor.data.current_contact_time[:, self._feet_ids]
+        in_contact = contact_time > 0.0
+        in_mode_time = torch.where(in_contact, contact_time, air_time)
+        single_stance = torch.sum(in_contact.int(), dim=1) == 1
+        feet_air_time = torch.min(torch.where(single_stance.unsqueeze(-1), in_mode_time, 0.0), dim=1)[0]
+        feet_air_time = torch.clamp(feet_air_time, max=self.cfg.feet_air_time_threshold)
+        # no reward for zero command
+        feet_air_time *= torch.norm(self._commands[:, :2], dim=1) > 0.1
 
         # feet slide
         contacts = self._contact_sensor.data.net_forces_w_history[:, :, self._feet_ids, :].norm(dim=-1).max(dim=1)[0] > 1.0
@@ -174,24 +199,24 @@ class G1Env(DirectRLEnv):
         flat_orientation = torch.sum(torch.square(self._robot.data.projected_gravity_b[:, :2]), dim=1)
 
         rewards = {
-            "termination_penalty": termination_penalty * self.cfg.termination_penalty_scale * self.step_dt,
-            "track_lin_vel_xy_exp": lin_vel_error_mapped * self.cfg.track_lin_vel_xy_exp_scale * self.step_dt,
-            "track_ang_vel_z_exp": yaw_rate_error_mapped * self.cfg.track_ang_vel_z_exp_scale * self.step_dt,
-            "feet_air_time": feet_air_time * self.cfg.feet_air_time_reward_scale * self.step_dt,
-            "feet_slide": feet_slide * self.cfg.feet_slide_reward_scale * self.step_dt,
-            "dof_pos_limits": joint_pos_limits * self.cfg.dof_pos_limit_reward_scale * self.step_dt,
-            "joint_deviation_hip": joint_deviation_hip * self.cfg.joint_deviation_hip_reward_scale * self.step_dt,
-            "joint_deviation_arms": joint_deviation_arms * self.cfg.joint_deviation_arms_reward_scale * self.step_dt,
-            "joint_deviation_fingers": joint_deviation_fingers * self.cfg.joint_deviation_fingers_reward_scale * self.step_dt,
-            "joint_deviation_torso": joint_deviation_torso * self.cfg.joint_deviation_torso_reward_scale * self.step_dt,
+            "termination_penalty": termination_penalty * self.cfg.termination_penalty_scale,
+            "track_lin_vel_xy_exp": lin_vel_error_mapped * self.cfg.track_lin_vel_xy_exp_scale,
+            "track_ang_vel_z_exp": yaw_rate_error_mapped * self.cfg.track_ang_vel_z_exp_scale,
+            "feet_air_time": feet_air_time * self.cfg.feet_air_time_reward_scale,
+            "feet_slide": feet_slide * self.cfg.feet_slide_reward_scale,
+            "dof_pos_limits": joint_pos_limits * self.cfg.dof_pos_limit_reward_scale,
+            "joint_deviation_hip": joint_deviation_hip * self.cfg.joint_deviation_hip_reward_scale,
+            "joint_deviation_arms": joint_deviation_arms * self.cfg.joint_deviation_arms_reward_scale,
+            "joint_deviation_fingers": joint_deviation_fingers * self.cfg.joint_deviation_fingers_reward_scale,
+            "joint_deviation_torso": joint_deviation_torso * self.cfg.joint_deviation_torso_reward_scale,
             
             # other rewards
-            "lin_vel_z_l2": z_vel_error * self.cfg.lin_vel_z_l2_scale * self.step_dt,
-            "ang_vel_xy_l2": ang_vel_error * self.cfg.ang_vel_reward_scale * self.step_dt,
-            "dof_torques_l2": joint_torques * self.cfg.joint_torque_reward_scale * self.step_dt,
-            "dof_acc_l2": joint_accel * self.cfg.joint_accel_reward_scale * self.step_dt,
-            "action_rate_l2": action_rate * self.cfg.action_rate_reward_scale * self.step_dt,
-            "flat_orientation_l2": flat_orientation * self.cfg.flat_orientation_reward_scale * self.step_dt,
+            "lin_vel_z_l2": z_vel_error * self.cfg.lin_vel_z_l2_scale,
+            "ang_vel_xy_l2": ang_vel_error * self.cfg.ang_vel_reward_scale,
+            "dof_torques_l2": joint_torques * self.cfg.joint_torque_reward_scale,
+            "dof_acc_l2": joint_accel * self.cfg.joint_accel_reward_scale,
+            "action_rate_l2": action_rate * self.cfg.action_rate_reward_scale,
+            "flat_orientation_l2": flat_orientation * self.cfg.flat_orientation_reward_scale,
         }
 
         reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
@@ -202,8 +227,8 @@ class G1Env(DirectRLEnv):
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         time_out = self.episode_length_buf >= self.max_episode_length - 1
-        net_contact_forces = self._contact_sensor.data.net_forces_w_history
-        died = torch.any(torch.max(torch.norm(net_contact_forces[:, :, self._base_id], dim=-1), dim=1)[0] > 1.0, dim=1)
+        net_contact_forces = self._contact_sensor.data.net_forces_w_history 
+        died = torch.any(torch.max(torch.norm(net_contact_forces[:, :, self._base_id + self._head_id], dim=-1), dim=1)[0] > 1.0, dim=1)
         return died, time_out
 
     def _reset_idx(self, env_ids: torch.Tensor | None):
