@@ -98,26 +98,29 @@ class G1FlatEnvCfg(DirectRLEnvCfg):
         prim_path="/World/envs/env_.*/Robot/.*", history_length=3, update_period=0.005, track_air_time=True
     )
 
-    # reward scales
-    termination_penalty_scale = -200
+    # reward scales - flat terrain
     track_ang_vel_z_exp_scale = 1.0
     lin_vel_z_l2_scale = -0.2
-    action_rate_reward_scale = -0.005
-    joint_accel_reward_scale = -1.0e-7
-    feet_air_time_reward_scale = 0.75
+    action_rate_l2_scale = -0.005
+    dof_acc_l2_scale = -1.0e-7
+    feet_air_time_scale = 0.75
     feet_air_time_threshold = 0.4
-    joint_torque_reward_scale = -2.0e-6
+    dof_torques_l2_scale = -2.0e-6
 
-    flat_orientation_reward_scale = -1.0
+    # additional reward scales - rough terrain
+    termination_penalty_scale = -200
     track_lin_vel_xy_exp_scale = 1.0
-    feet_slide_reward_scale = -0.1
-    dof_pos_limit_reward_scale = -1.0
-    joint_deviation_hip_reward_scale = -0.1
-    joint_deviation_arms_reward_scale = -0.1
-    joint_deviation_fingers_reward_scale = -0.05
-    joint_deviation_torso_reward_scale = -0.1   
-    ang_vel_reward_scale = -0.05
-    undesired_contact_reward_scale = -1.0
+    feet_slide_scale = -0.1
+    dof_pos_limit_scale = -1.0
+    joint_deviation_hip_scale = -0.1
+    joint_deviation_arms_scale = -0.1
+    joint_deviation_fingers_scale = -0.05
+    joint_deviation_torso_scale = -0.1
+    flat_orientation_l2_scale = -1.0
+
+    # additional reward scales - locomotion
+    ang_vel_xy_l2_scale = -0.05
+    undesired_contact_scale = -1.0
 
 
 @configclass
@@ -156,9 +159,9 @@ class G1RoughEnvCfg(G1FlatEnvCfg):
 
     # reward scales (override from flat config)
     track_ang_vel_z_exp_scale = 2.0
-    feet_air_time_reward_scale = 0.25
+    feet_air_time_scale = 0.25
 
     # other reward scales (override from flat config)
     lin_vel_z_l2_scale = -0.0
-    joint_torque_reward_scale = -1.5e-7
-    joint_accel_reward_scale = -1.25e-7
+    dof_torques_l2_scale = -1.5e-7
+    dof_acc_l2_scale = -1.25e-7
