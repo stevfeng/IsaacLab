@@ -2,7 +2,7 @@
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
-
+from typing import Dict, Tuple
 import isaaclab.envs.mdp as mdp
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg
@@ -61,7 +61,7 @@ class G1FlatEnvCfg(DirectRLEnvCfg):
 
     # simulation
     sim: SimulationCfg = SimulationCfg(
-        dt=1 / 200,
+        dt=0.005,
         render_interval=decimation,
         disable_contact_processing=True,
         physics_material=sim_utils.RigidBodyMaterialCfg(
@@ -98,6 +98,12 @@ class G1FlatEnvCfg(DirectRLEnvCfg):
         prim_path="/World/envs/env_.*/Robot/.*", history_length=3, update_period=0.005, track_air_time=True
     )
 
+    command_ranges: Dict[str, Tuple[float, float]] = {
+        "lin_vel_x": (0.0, 1.0),
+        "lin_vel_y": (-0.5, 0.5),
+        "ang_vel_z": (-1.0, 1.0),
+    }
+
     # reward scales - flat terrain
     track_ang_vel_z_exp_scale = 1.0
     lin_vel_z_l2_scale = -0.2
@@ -120,7 +126,7 @@ class G1FlatEnvCfg(DirectRLEnvCfg):
 
     # additional reward scales - locomotion
     ang_vel_xy_l2_scale = -0.05
-    undesired_contact_scale = -1.0
+    # undesired_contact_scale = -1.0
 
 
 @configclass
@@ -156,6 +162,12 @@ class G1RoughEnvCfg(G1FlatEnvCfg):
         debug_vis=False,
         mesh_prim_paths=["/World/ground"],
     )
+
+    command_ranges: Dict[str, Tuple[float, float]] = {
+        "lin_vel_x": (0.0, 1.0),
+        "lin_vel_y": (-0.0, 0.0),
+        "ang_vel_z": (-1.0, 1.0),
+    }
 
     # reward scales (override from flat config)
     track_ang_vel_z_exp_scale = 2.0

@@ -58,7 +58,7 @@ class G1Env(DirectRLEnv):
         }
 
         # Get specific body indices
-        self._base_id, _ = self._contact_sensor.find_bodies("pelvis")
+        self._base_id, _ = self._contact_sensor.find_bodies("torso_link")
         self._head_id, _ = self._contact_sensor.find_bodies("head_link")
         self._feet_ids, _ = self._contact_sensor.find_bodies(".*_ankle_roll_link")
         self._ankle_ids, _ = self._robot.find_joints([".*_ankle_pitch_joint", ".*_ankle_roll_joint"])
@@ -133,6 +133,7 @@ class G1Env(DirectRLEnv):
         )
         lin_vel_error = torch.sum(torch.square(self._commands[:, :2] - vel_yaw[:, :2]), dim=1)
         track_lin_vel_xy_exp = torch.exp(-lin_vel_error / 0.25)  # std is 0.5, std**2 is 0.25
+
         # yaw rate tracking
         # Use world frame angular velocity to match manager workflow
         ang_vel_error = torch.square(self._commands[:, 2] - self._robot.data.root_ang_vel_w[:, 2])
@@ -175,21 +176,22 @@ class G1Env(DirectRLEnv):
         joint_deviation_torso = torch.sum(torch.abs(torso_angle), dim=1)
 
         # z velocity tracking
-        z_vel_error = torch.square(self._robot.data.root_lin_vel_b[:, 2])
+        lin_vel_z_l2 = torch.square(self._robot.data.root_lin_vel_b[:, 2])
         # angular velocity x/y
-        ang_vel_xy_error = torch.sum(torch.square(self._robot.data.root_ang_vel_b[:, :2]), dim=1)
+        ang_vel_xy_l2 = torch.sum(torch.square(self._robot.data.root_ang_vel_b[:, :2]), dim=1)
         # joint torques
-        joint_torques = torch.sum(torch.square(self._robot.data.applied_torque[:, self._hip_ids + self._knee_ids]), dim=1)
+        joint_torques_l2 = torch.sum(torch.square(self._robot.data.applied_torque[:, self._hip_ids + self._knee_ids]), dim=1)
         # joint acceleration
-        joint_accel = torch.sum(torch.square(self._robot.data.joint_acc[:, self._hip_ids + self._knee_ids]), dim=1)
+        joint_acc_l2 = torch.sum(torch.square(self._robot.data.joint_acc[:, self._hip_ids + self._knee_ids]), dim=1)
         # action rate
-        action_rate = torch.sum(torch.square(self._actions - self._previous_actions), dim=1)
+        action_rate_l2 = torch.sum(torch.square(self._actions - self._previous_actions), dim=1)
 
         # flat orientation
-        flat_orientation = torch.sum(torch.square(self._robot.data.projected_gravity_b[:, :2]), dim=1)
+        flat_orientation_l2 = torch.sum(torch.square(self._robot.data.projected_gravity_b[:, :2]), dim=1)
 
         rewards = {
-            "termination_penalty": termination_penalty * self.cfg.termination_penalty_scale,
+            # rewards from G1 rough terrain env
+            "termination_penalty": (termination_penalty | timeout) * self.cfg.termination_penalty_scale,
             "track_lin_vel_xy_exp": track_lin_vel_xy_exp * self.cfg.track_lin_vel_xy_exp_scale,
             "track_ang_vel_z_exp": track_ang_vel_z_exp * self.cfg.track_ang_vel_z_exp_scale,
             "feet_air_time": feet_air_time * self.cfg.feet_air_time_scale,
@@ -201,12 +203,12 @@ class G1Env(DirectRLEnv):
             "joint_deviation_torso": joint_deviation_torso * self.cfg.joint_deviation_torso_scale,
             
             # other rewards
-            "lin_vel_z_l2": z_vel_error * self.cfg.lin_vel_z_l2_scale,
-            "ang_vel_xy_l2": ang_vel_xy_error * self.cfg.ang_vel_xy_l2_scale,
-            "dof_torques_l2": joint_torques * self.cfg.dof_torques_l2_scale,
-            "dof_acc_l2": joint_accel * self.cfg.dof_acc_l2_scale,
-            "action_rate_l2": action_rate * self.cfg.action_rate_l2_scale,
-            "flat_orientation_l2": flat_orientation * self.cfg.flat_orientation_l2_scale,
+            "lin_vel_z_l2": lin_vel_z_l2 * self.cfg.lin_vel_z_l2_scale,
+            "ang_vel_xy_l2": ang_vel_xy_l2 * self.cfg.ang_vel_xy_l2_scale,
+            "dof_torques_l2": joint_torques_l2 * self.cfg.dof_torques_l2_scale,
+            "dof_acc_l2": joint_acc_l2 * self.cfg.dof_acc_l2_scale,
+            "action_rate_l2": action_rate_l2 * self.cfg.action_rate_l2_scale,
+            "flat_orientation_l2": flat_orientation_l2 * self.cfg.flat_orientation_l2_scale,
         }
 
         reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
@@ -234,9 +236,9 @@ class G1Env(DirectRLEnv):
 
         # Sample new commands
         self._commands[env_ids] = torch.zeros_like(self._commands[env_ids])
-        self._commands[env_ids, 0] = torch.zeros_like(self._commands[env_ids, 0]).uniform_(0.0, 1.0)
-        self._commands[env_ids, 1] = torch.zeros_like(self._commands[env_ids, 1]).uniform_(-0.5, 0.5)
-        self._commands[env_ids, 2] = torch.zeros_like(self._commands[env_ids, 2]).uniform_(-1.0, 1.0)
+        self._commands[env_ids, 0] = torch.zeros_like(self._commands[env_ids, 0]).uniform_(self.cfg.command_ranges["lin_vel_x"][0], self.cfg.command_ranges["lin_vel_x"][1])
+        self._commands[env_ids, 1] = torch.zeros_like(self._commands[env_ids, 1]).uniform_(self.cfg.command_ranges["lin_vel_y"][0], self.cfg.command_ranges["lin_vel_y"][1])
+        self._commands[env_ids, 2] = torch.zeros_like(self._commands[env_ids, 2]).uniform_(self.cfg.command_ranges["ang_vel_z"][0], self.cfg.command_ranges["ang_vel_z"][1])
         
         # print("self._commands[env_ids]", self._commands[env_ids])
 
