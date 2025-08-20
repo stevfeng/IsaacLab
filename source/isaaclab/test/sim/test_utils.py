@@ -20,7 +20,7 @@ import pytest
 from pxr import Sdf, Usd, UsdGeom, UsdPhysics
 
 import isaaclab.sim as sim_utils
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
+from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 
 @pytest.fixture(autouse=True)
